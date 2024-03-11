@@ -107,6 +107,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import multiprocessing as mp
+import logging
 import os
 import re
 import subprocess
@@ -302,8 +303,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         try:
             libnvml.nvmlQuery('nvmlDeviceGetCount', default=0)
             __is_rocm__ = False
-        except libnvml.NVMLError_LibraryNotFound:
-            print("nvml check failed, fallback to rocm.")
+        except (libnvml.NVMLError_LibraryNotFound, libnvml.NVMLError) as e:
+            # print("nvml check failed, fallback to rocm.")
         
             try:
                 librocm.initializeRsmi()
@@ -1492,13 +1493,18 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             $(( "$(nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=power.draw)" * 1000 ))
         """
         if self.is_rocm():
-            power_dict = librocm.getPower(self.handle)
-            if (power_dict['ret'] == librocm.rsmi_status_t.RSMI_STATUS_SUCCESS and 
-                power_dict['power_type'] != 'INVALID_POWER_TYPE'):
-                assert power_dict['power_type'] == 'AVERAGE'
-                power = int(float(power_dict['power']) * 1000)
-                return power
-            return NA
+            try:
+                power_dict = librocm.getPower(self.handle)
+                if (power_dict['ret'] == librocm.rsmi_status_t.RSMI_STATUS_SUCCESS and 
+                    power_dict['power_type'] != 'INVALID_POWER_TYPE'):
+                    assert power_dict['power_type'] == 'AVERAGE'
+                    power = int(float(power_dict['power']) * 1000)
+                    return power
+                return 0
+            except AttributeError:
+                # print(f'ROCm power usage not available.')
+                # undefined symbol: rsmi_dev_power_get. May occur when rocm-smi version is too low.
+                return 0
         
         return libnvml.nvmlQuery('nvmlDeviceGetPowerUsage', self.handle)
 
@@ -2265,15 +2271,17 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
                     if dv_index != self.handle:
                         continue
                     
-
-                    ret = librocm.rocmsmi.rsmi_compute_process_info_by_device_get(int(pid), self.handle, byref(proc))
-                    if librocm.rsmi_ret_ok(ret, metric='get_compute_process_info_by_pid'):
-                        vramUsage = proc.vram_usage
-                        sdmaUsage = proc.sdma_usage
-                        if proc.cu_occupancy != cuOccupancyInvalid:
-                            cuOccupancy = proc.cu_occupancy
-                    else:
-                        logging.debug('Unable to fetch process info by PID')
+                    try:
+                        ret = librocm.rocmsmi.rsmi_compute_process_info_by_device_get(int(pid), self.handle, byref(proc))
+                        if librocm.rsmi_ret_ok(ret, metric='get_compute_process_info_by_pid'):
+                            vramUsage = proc.vram_usage
+                            sdmaUsage = proc.sdma_usage
+                            if proc.cu_occupancy != cuOccupancyInvalid:
+                                cuOccupancy = proc.cu_occupancy
+                        else:
+                            logging.debug('Unable to fetch process info by PID')
+                    except AttributeError:
+                        logging.debug("Driver too old to support rsmi_compute_process_info_by_device_get")
                 
                     processes[pid] = self.GPU_PROCESS_CLASS(
                         pid = pid,
