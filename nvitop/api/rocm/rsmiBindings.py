@@ -1,14 +1,22 @@
-#!/usr/bin/env python3
-"""ROCm_SMI_LIB CLI Tool Python Bindings"""
+# pylint: skip-file
+# ruff: noqa
+# flake8: noqa
+# type: ignore
+"""ROCm_SMI_LIB CLI Tool Python Bindings
+
+====
+Adapted by Junyi from 'rocm-smi-lib', branch `develop`, commit `9a3a50f`.
+lint is disabled because this file is adapted from rocm-smi-lib.
+https://github.com/ROCm/rocm_smi_lib/tree/develop/python_smi_tools
+=====
+"""
+
 # NOTE: You MUST call rsmiBindings.initRsmiBindings() when using this library!
 # TODO: Get most (or all) of these from rocm_smi.h to avoid mismatches and redundancy
 
-from __future__ import print_function
-import ctypes.util
 from ctypes import *
 from enum import Enum
 
-import os
 
 # Use ROCm installation path if running from standard installation
 # With File Reorg rsmiBindings.py will be installed in  /opt/rocm/libexec/rocm_smi.
@@ -16,7 +24,7 @@ import os
 # if ROCM_SMI_LIB_PATH is set, we can load 'librocm_smi64.so' from that location
 #
 # Library load is wrapped in a function so prints can be hidden for PRINT_JSON mode.
-path_librocm = str()
+path_librocm = ''
 
 # Device ID
 dv_id = c_uint64()
@@ -57,7 +65,7 @@ class rsmi_status_t(c_int):
     RSMI_STATUS_UNKNOWN_ERROR = 0xFFFFFFFF
 
 
-#Dictionary of rsmi ret codes and it's verbose output
+# Dictionary of rsmi ret codes and it's verbose output
 rsmi_status_verbose_err_out = {
     rsmi_status_t.RSMI_STATUS_SUCCESS: 'Operation was successful',
     rsmi_status_t.RSMI_STATUS_INVALID_ARGS: 'Invalid arguments provided',
@@ -67,11 +75,11 @@ rsmi_status_verbose_err_out = {
     rsmi_status_t.RSMI_STATUS_OUT_OF_RESOURCES: 'Unable to acquire memory or other resource',
     rsmi_status_t.RSMI_STATUS_INTERNAL_EXCEPTION: 'An internal exception was caught',
     rsmi_status_t.RSMI_STATUS_INPUT_OUT_OF_BOUNDS: 'Provided input is out of allowable or safe range',
-    rsmi_status_t.RSMI_INITIALIZATION_ERROR: 'Error occured during rsmi initialization',
+    rsmi_status_t.RSMI_INITIALIZATION_ERROR: 'Error occurred during rsmi initialization',
     rsmi_status_t.RSMI_STATUS_NOT_YET_IMPLEMENTED: 'Requested function is not implemented on this setup',
     rsmi_status_t.RSMI_STATUS_NOT_FOUND: 'Item searched for but not found',
     rsmi_status_t.RSMI_STATUS_INSUFFICIENT_SIZE: 'Insufficient resources available',
-    rsmi_status_t.RSMI_STATUS_INTERRUPT: 'Interrupt occured during execution',
+    rsmi_status_t.RSMI_STATUS_INTERRUPT: 'Interrupt occurred during execution',
     rsmi_status_t.RSMI_STATUS_UNEXPECTED_SIZE: 'Unexpected amount of data read',
     rsmi_status_t.RSMI_STATUS_NO_DATA: 'No data found for the given input',
     rsmi_status_t.RSMI_STATUS_UNEXPECTED_DATA: 'Unexpected data received',
@@ -79,7 +87,7 @@ rsmi_status_verbose_err_out = {
     rsmi_status_t.RSMI_STATUS_REFCOUNT_OVERFLOW: 'Data overflow - data exceeded INT32_MAX',
     rsmi_status_t.RSMI_STATUS_SETTING_UNAVAILABLE: 'Requested setting is unavailable for current device',
     rsmi_status_t.RSMI_STATUS_AMDGPU_RESTART_ERR: 'Could not successfully restart the amdgpu driver',
-    rsmi_status_t.RSMI_STATUS_UNKNOWN_ERROR: 'Unknown error occured'
+    rsmi_status_t.RSMI_STATUS_UNKNOWN_ERROR: 'Unknown error occured',
 }
 
 
@@ -138,15 +146,15 @@ class rsmi_voltage_type_t(c_int):
 # The perf_level_string is correlated to rsmi_dev_perf_level_t
 def perf_level_string(i):
     switcher = {
-        0:  'AUTO',
-        1:  'LOW',
-        2:  'HIGH',
-        3:  'MANUAL',
-        4:  'STABLE_STD',
-        5:  'STABLE_PEAK',
-        6:  'STABLE_MIN_MCLK',
-        7:  'STABLE_MIN_SCLK',
-        8:  'PERF_DETERMINISM',
+        0: 'AUTO',
+        1: 'LOW',
+        2: 'HIGH',
+        3: 'MANUAL',
+        4: 'STABLE_STD',
+        5: 'STABLE_PEAK',
+        6: 'STABLE_MIN_MCLK',
+        7: 'STABLE_MIN_SCLK',
+        8: 'PERF_DETERMINISM',
     }
     return switcher.get(i, 'UNKNOWN')
 
@@ -160,13 +168,12 @@ class rsmi_sw_component_t(c_int):
     RSMI_SW_COMP_LAST = RSMI_SW_COMP_DRIVER
 
 
-
 rsmi_event_handle_t = POINTER(c_uint)
 
 
 class rsmi_event_group_t(Enum):
     RSMI_EVNT_GRP_XGMI = 0
-    RSMI_EVNT_GRP_XGMI_DATA_OUT =  10
+    RSMI_EVNT_GRP_XGMI_DATA_OUT = 10
     RSMI_EVNT_GRP_INVALID = 0xFFFFFFFF
 
 
@@ -192,7 +199,7 @@ class rsmi_event_type_t(c_int):
     RSMI_EVNT_XGMI_DATA_OUT_5 = 15
     RSMI_EVNT_XGMI_DATA_OUT_LAST = RSMI_EVNT_XGMI_DATA_OUT_5
 
-    RSMI_EVNT_LAST = RSMI_EVNT_XGMI_DATA_OUT_LAST,
+    RSMI_EVNT_LAST = (RSMI_EVNT_XGMI_DATA_OUT_LAST,)
 
 
 class rsmi_counter_command_t(c_int):
@@ -201,9 +208,7 @@ class rsmi_counter_command_t(c_int):
 
 
 class rsmi_counter_value_t(Structure):
-    _fields_ = [('value', c_uint64),
-                ('time_enabled', c_uint64),
-                ('time_running', c_uint64)]
+    _fields_ = [('value', c_uint64), ('time_enabled', c_uint64), ('time_running', c_uint64)]
 
 
 class rsmi_clk_type_t(c_int):
@@ -218,14 +223,18 @@ class rsmi_clk_type_t(c_int):
 
 
 # Clock names here are correlated to the rsmi_clk_type_t values above
-clk_type_names = ['sclk', 'sclk', 'fclk', 'dcefclk',\
-                  'socclk', 'mclk', 'mclk', 'invalid']
-rsmi_clk_type_dict = {'RSMI_CLK_TYPE_SYS': 0x0, 'RSMI_CLK_TYPE_FIRST': 0x0,\
-                      'RSMI_CLK_TYPE_DF': 0x1, 'RSMI_CLK_TYPE_DCEF': 0x2,\
-                      'RSMI_CLK_TYPE_SOC': 0x3, 'RSMI_CLK_TYPE_MEM': 0x4,\
-                      'RSMI_CLK_TYPE_LAST': 0X4, 'RSMI_CLK_INVALID': 0xFFFFFFFF}
-rsmi_clk_names_dict = {'sclk': 0x0, 'fclk': 0x1, 'dcefclk': 0x2,\
-                       'socclk': 0x3, 'mclk': 0x4}
+clk_type_names = ['sclk', 'sclk', 'fclk', 'dcefclk', 'socclk', 'mclk', 'mclk', 'invalid']
+rsmi_clk_type_dict = {
+    'RSMI_CLK_TYPE_SYS': 0x0,
+    'RSMI_CLK_TYPE_FIRST': 0x0,
+    'RSMI_CLK_TYPE_DF': 0x1,
+    'RSMI_CLK_TYPE_DCEF': 0x2,
+    'RSMI_CLK_TYPE_SOC': 0x3,
+    'RSMI_CLK_TYPE_MEM': 0x4,
+    'RSMI_CLK_TYPE_LAST': 0x4,
+    'RSMI_CLK_INVALID': 0xFFFFFFFF,
+}
+rsmi_clk_names_dict = {'sclk': 0x0, 'fclk': 0x1, 'dcefclk': 0x2, 'socclk': 0x3, 'mclk': 0x4}
 rsmi_clk_type = rsmi_clk_type_t
 
 
@@ -308,9 +317,9 @@ rsmi_gpu_block = rsmi_gpu_block_t
 
 # The following dictionary correlates with rsmi_gpu_block_t enum
 rsmi_gpu_block_d = {
-    'UMC' :  0x0000000000000001,
-    'SDMA' : 0x0000000000000002,
-    'GFX' : 0x0000000000000004,
+    'UMC': 0x0000000000000001,
+    'SDMA': 0x0000000000000002,
+    'GFX': 0x0000000000000004,
     'MMHUB': 0x0000000000000008,
     'ATHUB': 0x0000000000000010,
     'PCIE_BIF': 0x0000000000000020,
@@ -321,8 +330,8 @@ rsmi_gpu_block_d = {
     'SEM': 0x0000000000000400,
     'MP0': 0x0000000000000800,
     'MP1': 0x0000000000001000,
-    'FUSE': 0x0000000000002000
-    }
+    'FUSE': 0x0000000000002000,
+}
 
 
 class rsmi_ras_err_state_t(c_int):
@@ -338,21 +347,46 @@ class rsmi_ras_err_state_t(c_int):
 
 
 # Error type list correlates to rsmi_ras_err_state_t
-rsmi_ras_err_stale_readable = ['no errors', 'ECC disabled',
-                               'unknown type err', 'single correctable err',
-                               'multiple uncorrectable err',
-                               'page isolated, treat as uncorrectable err',
-                               'ECC enabled', 'status invalid']
-rsmi_ras_err_stale_machine = ['none', 'disabled', 'unknown error',
-                              'sing', 'mult', 'position', 'enabled']
+rsmi_ras_err_stale_readable = [
+    'no errors',
+    'ECC disabled',
+    'unknown type err',
+    'single correctable err',
+    'multiple uncorrectable err',
+    'page isolated, treat as uncorrectable err',
+    'ECC enabled',
+    'status invalid',
+]
+rsmi_ras_err_stale_machine = [
+    'none',
+    'disabled',
+    'unknown error',
+    'sing',
+    'mult',
+    'position',
+    'enabled',
+]
 
 validRasTypes = ['ue', 'ce']
 
 validRasActions = ['disable', 'enable', 'inject']
 
-validRasBlocks = ['fuse', 'mp1', 'mp0', 'sem', 'smn', 'df', 'xgmi_wafl', 'hdp', 'pcie_bif',
-
-                  'athub', 'mmhub', 'gfx', 'sdma', 'umc']
+validRasBlocks = [
+    'fuse',
+    'mp1',
+    'mp0',
+    'sem',
+    'smn',
+    'df',
+    'xgmi_wafl',
+    'hdp',
+    'pcie_bif',
+    'athub',
+    'mmhub',
+    'gfx',
+    'sdma',
+    'umc',
+]
 
 
 class rsmi_memory_type_t(c_int):
@@ -407,25 +441,49 @@ class rsmi_fw_block_t(c_int):
 
 
 # The following list correlated to the rsmi_fw_block_t
-fw_block_names_l = ['ASD', 'CE', 'DMCU', 'MC', 'ME', 'MEC', 'MEC2', 'MES', 'MES KIQ', 'PFP',\
-                    'RLC', 'RLC SRLC', 'RLC SRLG', 'RLC SRLS', 'SDMA', 'SDMA2',\
-                    'SMC', 'SOS', 'TA RAS', 'TA XGMI', 'UVD', 'VCE', 'VCN']
+fw_block_names_l = [
+    'ASD',
+    'CE',
+    'DMCU',
+    'MC',
+    'ME',
+    'MEC',
+    'MEC2',
+    'MES',
+    'MES KIQ',
+    'PFP',
+    'RLC',
+    'RLC SRLC',
+    'RLC SRLG',
+    'RLC SRLS',
+    'SDMA',
+    'SDMA2',
+    'SMC',
+    'SOS',
+    'TA RAS',
+    'TA XGMI',
+    'UVD',
+    'VCE',
+    'VCN',
+]
 
 
 rsmi_bit_field_t = c_uint64()
 rsmi_bit_field = rsmi_bit_field_t
 
+
 class rsmi_utilization_counter_type(c_int):
     RSMI_UTILIZATION_COUNTER_FIRST = 0
-    RSMI_COARSE_GRAIN_GFX_ACTIVITY  = RSMI_UTILIZATION_COUNTER_FIRST
+    RSMI_COARSE_GRAIN_GFX_ACTIVITY = RSMI_UTILIZATION_COUNTER_FIRST
     RSMI_COARSE_GRAIN_MEM_ACTIVITY = 1
     RSMI_UTILIZATION_COUNTER_LAST = RSMI_COARSE_GRAIN_MEM_ACTIVITY
 
+
 utilization_counter_name = ['GFX Activity', 'Memory Activity']
 
+
 class rsmi_utilization_counter_t(Structure):
-    _fields_ = [('type', c_int),
-                ('val', c_uint64)]
+    _fields_ = [('type', c_int), ('val', c_uint64)]
 
 
 class rsmi_xgmi_status_t(c_int):
@@ -444,118 +502,118 @@ memory_page_status_l = ['reserved', 'pending', 'unreservable']
 
 
 class rsmi_retired_page_record_t(Structure):
-    _fields_ = [('page_address', c_uint64),
-                ('page_size', c_uint64),
-                ('status', c_int)]
+    _fields_ = [('page_address', c_uint64), ('page_size', c_uint64), ('status', c_int)]
 
 
-RSMI_MAX_NUM_POWER_PROFILES = (sizeof(rsmi_bit_field_t) * 8)
+RSMI_MAX_NUM_POWER_PROFILES = sizeof(rsmi_bit_field_t) * 8
 
 
 class rsmi_power_profile_status_t(Structure):
-    _fields_ = [('available_profiles', c_uint32),
-                ('current', c_uint64),
-                ('num_profiles', c_uint32)]
+    _fields_ = [('available_profiles', c_uint32), ('current', c_uint64), ('num_profiles', c_uint32)]
 
 
 rsmi_power_profile_status = rsmi_power_profile_status_t
 
 
 class rsmi_frequencies_t(Structure):
-    _fields_ = [('has_deep_sleep', c_bool),
-                ('num_supported', c_int32),
-                ('current', c_uint32),
-                ('frequency', c_uint64 * RSMI_MAX_NUM_FREQUENCIES)]
+    _fields_ = [
+        ('has_deep_sleep', c_bool),
+        ('num_supported', c_int32),
+        ('current', c_uint32),
+        ('frequency', c_uint64 * RSMI_MAX_NUM_FREQUENCIES),
+    ]
 
 
 rsmi_frequencies = rsmi_frequencies_t
 
 
 class rsmi_pcie_bandwidth_t(Structure):
-    _fields_ = [('transfer_rate', rsmi_frequencies_t),
-                ('lanes', c_uint32 * RSMI_MAX_NUM_FREQUENCIES)]
+    _fields_ = [
+        ('transfer_rate', rsmi_frequencies_t),
+        ('lanes', c_uint32 * RSMI_MAX_NUM_FREQUENCIES),
+    ]
 
 
 rsmi_pcie_bandwidth = rsmi_pcie_bandwidth_t
 
 
 class rsmi_version_t(Structure):
-    _fields_ = [('major', c_uint32),
-                ('minor', c_uint32),
-                ('patch', c_uint32),
-                ('build', c_char_p)]
+    _fields_ = [('major', c_uint32), ('minor', c_uint32), ('patch', c_uint32), ('build', c_char_p)]
 
 
 rsmi_version = rsmi_version_t
 
 
 class rsmi_range_t(Structure):
-    _fields_ = [('lower_bound', c_uint64),
-                ('upper_bound', c_uint64)]
+    _fields_ = [('lower_bound', c_uint64), ('upper_bound', c_uint64)]
 
 
 rsmi_range = rsmi_range_t
 
 
 class rsmi_od_vddc_point_t(Structure):
-    _fields_ = [('frequency', c_uint64),
-                ('voltage', c_uint64)]
+    _fields_ = [('frequency', c_uint64), ('voltage', c_uint64)]
 
 
 rsmi_od_vddc_point = rsmi_od_vddc_point_t
 
 
 class rsmi_freq_volt_region_t(Structure):
-    _fields_ = [('freq_range', rsmi_range_t),
-                ('volt_range', rsmi_range_t)]
+    _fields_ = [('freq_range', rsmi_range_t), ('volt_range', rsmi_range_t)]
 
 
 rsmi_freq_volt_region = rsmi_freq_volt_region_t
 
 
 class rsmi_od_volt_curve_t(Structure):
-    _fields_ = [('vc_points', rsmi_od_vddc_point_t *\
-                RSMI_NUM_VOLTAGE_CURVE_POINTS)]
+    _fields_ = [('vc_points', rsmi_od_vddc_point_t * RSMI_NUM_VOLTAGE_CURVE_POINTS)]
 
 
 rsmi_od_volt_curve = rsmi_od_volt_curve_t
 
 
 class rsmi_od_volt_freq_data_t(Structure):
-    _fields_ = [('curr_sclk_range', rsmi_range_t),
-                ('curr_mclk_range', rsmi_range_t),
-                ('sclk_freq_limits', rsmi_range_t),
-                ('mclk_freq_limits', rsmi_range_t),
-                ('curve', rsmi_od_volt_curve_t),
-                ('num_regions', c_uint32)]
+    _fields_ = [
+        ('curr_sclk_range', rsmi_range_t),
+        ('curr_mclk_range', rsmi_range_t),
+        ('sclk_freq_limits', rsmi_range_t),
+        ('mclk_freq_limits', rsmi_range_t),
+        ('curve', rsmi_od_volt_curve_t),
+        ('num_regions', c_uint32),
+    ]
 
 
 rsmi_od_volt_freq_data = rsmi_od_volt_freq_data_t
 
 
 class rsmi_error_count_t(Structure):
-    _fields_ = [('correctable_err', c_uint64),
-                ('uncorrectable_err', c_uint64)]
+    _fields_ = [('correctable_err', c_uint64), ('uncorrectable_err', c_uint64)]
 
 
 class rsmi_evt_notification_data_t(Structure):
-    _fields_ = [('dv_ind', c_uint32),
-                ('event', rsmi_evt_notification_type_t),
-                ('message', c_char*64)]
+    _fields_ = [
+        ('dv_ind', c_uint32),
+        ('event', rsmi_evt_notification_type_t),
+        ('message', c_char * 64),
+    ]
 
 
 class rsmi_process_info_t(Structure):
-    _fields_ = [('process_id', c_uint32),
-                ('pasid', c_uint32),
-                ('vram_usage', c_uint64),
-                ('sdma_usage', c_uint64),
-                ('cu_occupancy', c_uint32)]
+    _fields_ = [
+        ('process_id', c_uint32),
+        ('pasid', c_uint32),
+        ('vram_usage', c_uint64),
+        ('sdma_usage', c_uint64),
+        ('cu_occupancy', c_uint32),
+    ]
 
 
 class rsmi_func_id_iter_handle(Structure):
-    _fields_ = [('func_id_iter', POINTER(c_uint)),
-                ('container_ptr', POINTER(c_uint)),
-                ('id_type', c_uint32)]
+    _fields_ = [
+        ('func_id_iter', POINTER(c_uint)),
+        ('container_ptr', POINTER(c_uint)),
+        ('id_type', c_uint32),
+    ]
 
 
 rsmi_func_id_iter_handle_t = POINTER(rsmi_func_id_iter_handle)
@@ -565,19 +623,20 @@ RSMI_DEFAULT_VARIANT = 0xFFFFFFFFFFFFFFFF
 
 
 class submodule_union(Union):
-    _fields_ = [('memory_type', c_int),      #    rsmi_memory_type_t,
-                ('temp_metric', c_int),      #    rsmi_temperature_metric_t,
-                ('evnt_type', c_int),        #    rsmi_event_type_t,
-                ('evnt_group', c_int),       #    rsmi_event_group_t,
-                ('clk_type', c_int),         #    rsmi_clk_type_t,
-                ('fw_block', c_int),         #    rsmi_fw_block_t,
-                ('gpu_block_type', c_int)]   #    rsmi_gpu_block_t
+    _fields_ = [
+        ('memory_type', c_int),  #    rsmi_memory_type_t,
+        ('temp_metric', c_int),  #    rsmi_temperature_metric_t,
+        ('evnt_type', c_int),  #    rsmi_event_type_t,
+        ('evnt_group', c_int),  #    rsmi_event_group_t,
+        ('clk_type', c_int),  #    rsmi_clk_type_t,
+        ('fw_block', c_int),  #    rsmi_fw_block_t,
+        ('gpu_block_type', c_int),
+    ]  #    rsmi_gpu_block_t
 
 
 class rsmi_func_id_value_t(Union):
-    _fields_ = [('id', c_uint64),
-                ('name', c_char_p),
-                ('submodule', submodule_union)]
+    _fields_ = [('id', c_uint64), ('name', c_char_p), ('submodule', submodule_union)]
+
 
 class rsmi_compute_partition_type_t(c_int):
     RSMI_COMPUTE_PARTITION_INVALID = 0
@@ -587,13 +646,14 @@ class rsmi_compute_partition_type_t(c_int):
     RSMI_COMPUTE_PARTITION_TPX = 4
     RSMI_COMPUTE_PARTITION_QPX = 5
 
+
 rsmi_compute_partition_type_dict = {
     #'RSMI_COMPUTE_PARTITION_INVALID': 0,
     'CPX': 1,
     'SPX': 2,
     'DPX': 3,
     'TPX': 4,
-    'QPX': 5
+    'QPX': 5,
 }
 
 rsmi_compute_partition_type = rsmi_compute_partition_type_t
@@ -604,6 +664,7 @@ rsmi_compute_partition_type = rsmi_compute_partition_type_t
 # will return string 'CPX'
 compute_partition_type_l = ['CPX', 'SPX', 'DPX', 'TPX', 'QPX']
 
+
 class rsmi_memory_partition_type_t(c_int):
     RSMI_MEMORY_PARTITION_UNKNOWN = 0
     RSMI_MEMORY_PARTITION_NPS1 = 1
@@ -611,11 +672,12 @@ class rsmi_memory_partition_type_t(c_int):
     RSMI_MEMORY_PARTITION_NPS4 = 3
     RSMI_MEMORY_PARTITION_NPS8 = 4
 
+
 rsmi_memory_partition_type_dict = {
     'NPS1': 1,
     'NPS2': 2,
     'NPS4': 3,
-    'NPS8': 4
+    'NPS8': 4,
 }
 
 rsmi_memory_partition_type = rsmi_memory_partition_type_t
@@ -626,17 +688,20 @@ rsmi_memory_partition_type = rsmi_memory_partition_type_t
 # will return string 'NPS2'
 memory_partition_type_l = ['NPS1', 'NPS2', 'NPS4', 'NPS8']
 
+
 class rsmi_power_label(str, Enum):
     AVG_POWER = '(Avg)'
     CURRENT_SOCKET_POWER = '(Socket)'
 
+
 class rsmi_power_type_t(c_int):
-  RSMI_AVERAGE_POWER = 0,
-  RSMI_CURRENT_POWER = 1,
-  RSMI_INVALID_POWER = 0xFFFFFFFF
+    RSMI_AVERAGE_POWER = (0,)
+    RSMI_CURRENT_POWER = (1,)
+    RSMI_INVALID_POWER = 0xFFFFFFFF
+
 
 rsmi_power_type_dict = {
     0: 'AVERAGE',
     1: 'CURRENT SOCKET',
-    0xFFFFFFFF: 'INVALID_POWER_TYPE'
+    0xFFFFFFFF: 'INVALID_POWER_TYPE',
 }

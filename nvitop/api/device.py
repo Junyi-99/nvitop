@@ -106,8 +106,8 @@ from __future__ import annotations
 
 import contextlib
 import functools
-import multiprocessing as mp
 import logging
+import multiprocessing as mp
 import os
 import re
 import subprocess
@@ -115,14 +115,13 @@ import sys
 import textwrap
 import threading
 import time
-
-from ctypes import *
 from collections import OrderedDict
+from ctypes import byref, c_uint32, c_uint64, c_void_p
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generator, Iterable, NamedTuple, overload
 
 from nvitop.api import libcuda, libcudart, libnvml
-from nvitop.api.rocm import rocm_smi as librocm
 from nvitop.api.process import GpuProcess
+from nvitop.api.rocm import rocm_smi as librocm
 from nvitop.api.utils import (
     NA,
     UINT_MAX,
@@ -150,8 +149,6 @@ __all__ = [
     'parse_cuda_visible_devices',
     'normalize_cuda_visible_devices',
 ]
-
-__is_rocm__ = None
 
 # Class definitions ################################################################################
 
@@ -293,29 +290,26 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
     """Shortcut for class :class:`CudaDevice`."""
 
     _nvml_index: int | tuple[int, int]
-    
+    __is_rocm__: bool | None = None
+
     @classmethod
     def is_rocm(cls) -> bool:
-        global __is_rocm__
-        if __is_rocm__ is not None:
-            return __is_rocm__
-        
+        """Check whether the system is using ROCm when NVIDIA driver not found."""
+        if cls.__is_rocm__ is not None:
+            return cls.__is_rocm__
+
         try:
             libnvml.nvmlQuery('nvmlDeviceGetCount', default=0)
-            __is_rocm__ = False
-        except (libnvml.NVMLError_LibraryNotFound, libnvml.NVMLError) as e:
+            cls.__is_rocm__ = False
+        except (libnvml.NVMLError_LibraryNotFound, libnvml.NVMLError):
             # print("nvml check failed, fallback to rocm.")
-        
-            try:
-                librocm.initializeRsmi()
-                devices = librocm.listDevices()
-                __is_rocm__ = True
-            except Exception as e:
-                print(e)
-                __is_rocm__ = False
-        
-        return __is_rocm__
-    
+            # if there is error in rocm, process will exit().
+            librocm.initializeRsmi()  # type: ignore[attr-defined]
+            _ = librocm.listDevices()  # type: ignore[attr-defined]
+            cls.__is_rocm__ = True
+
+        return cls.__is_rocm__
+
     @classmethod
     def is_available(cls) -> bool:
         """Test whether there are any devices and the NVML library is successfully loaded."""
@@ -344,8 +338,9 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
                 driver without reloading the kernel module.
         """
         if Device.is_rocm():
-            return librocm.getVersion([0], librocm.rsmi_sw_component_t.RSMI_SW_COMP_DRIVER)
-        
+            component = librocm.rsmi_sw_component_t.RSMI_SW_COMP_DRIVER  # type: ignore[attr-defined]
+            return librocm.getVersion([0], component)  # type: ignore[attr-defined]
+
         return libnvml.nvmlQuery('nvmlSystemGetDriverVersion')
 
     @staticmethod
@@ -367,8 +362,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
                 driver without reloading the kernel module.
         """
         if Device.is_rocm():
-            return NA # TODO: to be implemented
-        
+            return NA  # TODO: to be implemented # pylint: disable=W0511
+
         cuda_driver_version = libnvml.nvmlQuery('nvmlSystemGetCudaDriverVersion')
         if libnvml.nvmlCheckReturn(cuda_driver_version, int):
             major = cuda_driver_version // 1000
@@ -418,8 +413,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
                 driver without reloading the kernel module.
         """
         if cls.is_rocm():
-            return len(librocm.listDevices())
-        
+            return len(librocm.listDevices())  # type: ignore[attr-defined]
+
         return libnvml.nvmlQuery('nvmlDeviceGetCount', default=0)
 
     @classmethod
@@ -681,7 +676,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
                 If the device is not found for the given NVML identifier.
             libnvml.NVMLError_InvalidArgument:
                 If the device index is out of range.
-        """
+        """  # pylint: disable=too-many-statements
         if isinstance(index, str) and self.UUID_PATTERN.match(index) is not None:  # passed by UUID
             index, uuid = None, index
 
@@ -698,12 +693,13 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         self._is_mig_device: bool | None = None
         self._cuda_index: int | None = None
         self._cuda_compute_capability: tuple[int, int] | NaType | None = None
+        self._handle: c_void_p | None = None
 
         if index is not None:
             if self.is_rocm():
                 self._rocm_index = index
-                self._handle = index
-                self._name = librocm.getDeviceName(index)
+                self._handle = index  # type: ignore[assignment]
+                self._name = librocm.getDeviceName(index)  # type: ignore[attr-defined]
             else:
                 self._nvml_index = index  # type: ignore[assignment]
                 try:
@@ -802,49 +798,48 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
                 return lambda: NA
 
             if self.is_rocm():
-                if name == '_rocm_duid': # get rocm device uid
+                if name == '_rocm_duid':  # get rocm device uid
                     duid = self.uuid()
                     setattr(self, name, duid)
                     return duid
-                elif name == '_nvml_index':
+                if name == '_nvml_index':
                     setattr(self, name, self._rocm_index)
                     return self._rocm_index
-                else:
-                    setattr(self, name, f'啥也不懂{name}')
-                    return "未知"
+                setattr(self, name, f'啥也不懂{name}')
+                return '未知'
+
+            match = libnvml.VERSIONED_PATTERN.match(name)
+            if match is not None:
+                name = match.group('name')
+                suffix = match.group('suffix')
             else:
-                match = libnvml.VERSIONED_PATTERN.match(name)
-                if match is not None:
-                    name = match.group('name')
-                    suffix = match.group('suffix')
-                else:
-                    suffix = ''
+                suffix = ''
 
+            try:
+                pascal_case = name.title().replace('_', '')
+                func = getattr(libnvml, 'nvmlDeviceGet' + pascal_case + suffix)
+            except AttributeError:
+                pascal_case = ''.join(
+                    part[:1].upper() + part[1:] for part in filter(None, name.split('_'))
+                )
+                func = getattr(libnvml, 'nvmlDeviceGet' + pascal_case + suffix)
+
+            def attribute(*args: Any, **kwargs: Any) -> Any:
                 try:
-                    pascal_case = name.title().replace('_', '')
-                    func = getattr(libnvml, 'nvmlDeviceGet' + pascal_case + suffix)
-                except AttributeError:
-                    pascal_case = ''.join(
-                        part[:1].upper() + part[1:] for part in filter(None, name.split('_'))
+                    return libnvml.nvmlQuery(
+                        func,
+                        self._handle,
+                        *args,
+                        **kwargs,
+                        ignore_errors=False,
                     )
-                    func = getattr(libnvml, 'nvmlDeviceGet' + pascal_case + suffix)
+                except libnvml.NVMLError_NotSupported:
+                    return NA
 
-                def attribute(*args: Any, **kwargs: Any) -> Any:
-                    try:
-                        return libnvml.nvmlQuery(
-                            func,
-                            self._handle,
-                            *args,
-                            **kwargs,
-                            ignore_errors=False,
-                        )
-                    except libnvml.NVMLError_NotSupported:
-                        return NA
-
-                attribute.__name__ = name
-                attribute.__qualname__ = f'{self.__class__.__name__}.{name}'
-                setattr(self, name, attribute)
-                return attribute
+            attribute.__name__ = name
+            attribute.__qualname__ = f'{self.__class__.__name__}.{name}'
+            setattr(self, name, attribute)
+            return attribute
 
     def __reduce__(self) -> tuple[type[Device], tuple[int | tuple[int, int]]]:
         """Return state information for pickling."""
@@ -857,7 +852,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         Returns: Union[int, Tuple[int, int]]
             Returns an int for physical device and tuple of two integers for MIG device.
         """
-        return self._nvml_index # Handling ROCm device in 'except AttributeError:'
+        return self._nvml_index  # Handling ROCm device in 'except AttributeError:'
 
     @property
     def nvml_index(self) -> int | tuple[int, int]:
@@ -937,11 +932,13 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """
         if self._uuid is NA:
             if self.is_rocm():
-                self.__uuid = 'N/A'
+                self._uuid = 'N/A'
                 dv_uid = c_uint64()
-                rocmsmi = librocm.get_rocmsmi()
+                rocmsmi = librocm.get_rocmsmi()  # type: ignore[attr-defined]
                 ret = rocmsmi.rsmi_dev_unique_id_get(self.handle, byref(dv_uid))
-                if librocm.rsmi_ret_ok(ret, self.handle, 'get_unique_id', True) and str(hex(dv_uid.value)):
+                if librocm.rsmi_ret_ok(ret, self.handle, 'get_unique_id', True) and str(  # type: ignore[attr-defined]
+                    hex(dv_uid.value),
+                ):
                     self._uuid = hex(dv_uid.value)
                 else:
                     self._uuid = 'N/A'
@@ -963,7 +960,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """
         if self._bus_id is NA:
             if self.is_rocm():
-                self._bus_id = librocm.getBus(self.handle)
+                self._bus_id = librocm.getBus(self.handle)  # type: ignore[attr-defined]
             else:
                 self._bus_id = libnvml.nvmlQuery(
                     lambda handle: libnvml.nvmlDeviceGetPciInfo(handle).busId,
@@ -995,13 +992,17 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             A named tuple with memory information, the item could be :const:`nvitop.NA` when not applicable.
         """
         if self.is_rocm():
-            vram_used, vram_total = librocm.getMemInfo(self.handle, 'vram')    
+            vram_used, vram_total = librocm.getMemInfo(self.handle, 'vram')  # type: ignore[attr-defined]
             return MemoryInfo(total=vram_total, free=vram_total - vram_used, used=vram_used)
-        else:
-            memory_info = libnvml.nvmlQuery('nvmlDeviceGetMemoryInfo', self.handle)
-            if libnvml.nvmlCheckReturn(memory_info):
-                return MemoryInfo(total=memory_info.total, free=memory_info.free, used=memory_info.used)
-            return MemoryInfo(total=NA, free=NA, used=NA)
+
+        memory_info = libnvml.nvmlQuery('nvmlDeviceGetMemoryInfo', self.handle)
+        if libnvml.nvmlCheckReturn(memory_info):
+            return MemoryInfo(
+                total=memory_info.total,
+                free=memory_info.free,
+                used=memory_info.used,
+            )
+        return MemoryInfo(total=NA, free=NA, used=NA)
 
     def memory_total(self) -> int | NaType:  # in bytes
         """Total installed GPU memory in bytes.
@@ -1191,16 +1192,15 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         gpu, memory, encoder, decoder = NA, NA, NA, NA
 
         if self.is_rocm():
-            gpu = librocm.getGpuUse(self.handle)
-            if gpu == -1:
-                gpu = NA
-            
-            vram_used, vram_total = librocm.getMemInfo(self.handle, 'vram')
+            gpu_use = librocm.getGpuUse(self.handle)  # type: ignore[attr-defined]
+            gpu = NA if gpu_use == -1 else gpu_use
+
+            vram_used, vram_total = librocm.getMemInfo(self.handle, 'vram')  # type: ignore[attr-defined]
             if vram_used is None:
                 memory = NA
-            if vram_used != None and vram_total != None and float(vram_total) != 0:
-                memory = int(round(float(100 * (float(vram_used) / float(vram_total)))))
-            #TODO: add encoder and decoder utilization for ROCm
+            if vram_used is not None and vram_total is not None and float(vram_total) != 0:
+                memory = int(round(float(100 * (float(vram_used) / float(vram_total)))))  # type: ignore[assignment]
+            # TODO: add encoder and decoder utilization for ROCm # pylint: disable=W0511
         else:
             utilization_rates = libnvml.nvmlQuery('nvmlDeviceGetUtilizationRates', self.handle)
             if libnvml.nvmlCheckReturn(utilization_rates):
@@ -1449,11 +1449,11 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=fan.speed
         """  # pylint: disable=line-too-long
         if self.is_rocm():
-            ret, fan_cur_speed, fan_max_speed = librocm.getFanSpeed(self.handle)
+            ret, fan_cur_speed, _ = librocm.getFanSpeed(self.handle)  # type: ignore[attr-defined]
             if ret == 2:
                 return NA
             return fan_cur_speed
-        
+
         return libnvml.nvmlQuery('nvmlDeviceGetFanSpeed', self.handle)
 
     def temperature(self) -> int | NaType:  # in Celsius
@@ -1469,15 +1469,16 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=temperature.gpu
         """
         if self.is_rocm():
-            temp_type = librocm.getTemperatureLabel([self.handle]) # self.handle represents the id of gpu. e.g. 0
-            temp = int(librocm.getTemp(self.handle, temp_type))
-            return temp
-        
+            temp_type = librocm.getTemperatureLabel(  # type: ignore[attr-defined]
+                [self.handle],
+            )  # self.handle represents the id of gpu. e.g. 0
+            return int(librocm.getTemp(self.handle, temp_type))  # type: ignore[attr-defined]
+
         return libnvml.nvmlQuery(
-                'nvmlDeviceGetTemperature',
-                self.handle,
-                libnvml.NVML_TEMPERATURE_GPU,
-            )
+            'nvmlDeviceGetTemperature',
+            self.handle,
+            libnvml.NVML_TEMPERATURE_GPU,
+        )
 
     @memoize_when_activated
     def power_usage(self) -> int | NaType:  # in milliwatts (mW)
@@ -1494,18 +1495,21 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """
         if self.is_rocm():
             try:
-                power_dict = librocm.getPower(self.handle)
-                if (power_dict['ret'] == librocm.rsmi_status_t.RSMI_STATUS_SUCCESS and 
-                    power_dict['power_type'] != 'INVALID_POWER_TYPE'):
-                    assert power_dict['power_type'] == 'AVERAGE'
-                    power = int(float(power_dict['power']) * 1000)
-                    return power
-                return 0
+                power_dict = librocm.getPower(self.handle)  # type: ignore[attr-defined]
+                if (
+                    power_dict['ret'] == librocm.rsmi_status_t.RSMI_STATUS_SUCCESS  # type: ignore[attr-defined]
+                    and power_dict['power_type'] != 'INVALID_POWER_TYPE'
+                ):
+                    assert (
+                        power_dict['power_type'] == 'AVERAGE'
+                    )  # TODO: add support for more types # pylint: disable=W0511
+                    return int(float(power_dict['power']) * 1000)
             except AttributeError:
-                # print(f'ROCm power usage not available.')
+                # ROCm power usage not available.
                 # undefined symbol: rsmi_dev_power_get. May occur when rocm-smi version is too low.
-                return 0
-        
+                pass
+
+            return 0
         return libnvml.nvmlQuery('nvmlDeviceGetPowerUsage', self.handle)
 
     power_draw = power_usage  # in milliwatts (mW)
@@ -1525,9 +1529,9 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             $(( "$(nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=power.limit)" * 1000 ))
         """
-        if self.is_rocm():
-            return int(librocm.getMaxPower(self.handle) * 1000) # Watts to milliwatts
-        
+        if self.is_rocm():  # Watts to milliwatts
+            return int(librocm.getMaxPower(self.handle) * 1000)  # type: ignore[attr-defined]
+
         return libnvml.nvmlQuery('nvmlDeviceGetPowerManagementLimit', self.handle)
 
     def power_status(self) -> str:  # string of power usage over power limit in watts (W)
@@ -1538,16 +1542,16 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """  # pylint: disable=line-too-long
         power_usage = self.power_usage()
         power_limit = self.power_limit()
-        
+
         if self.is_rocm():
-            power_usage = f'{round(power_usage / 1000)}W'
-            power_limit = f'{round(power_limit / 1000)}W'
+            power_usage = f'{round(power_usage / 1000)}W'  # type: ignore
+            power_limit = f'{round(power_limit / 1000)}W'  # type: ignore
         else:
             if libnvml.nvmlCheckReturn(power_usage, int):
                 power_usage = f'{round(power_usage / 1000)}W'  # type: ignore[assignment]
             if libnvml.nvmlCheckReturn(power_limit, int):
                 power_limit = f'{round(power_limit / 1000)}W'  # type: ignore[assignment]
-        
+
         return f'{power_usage} / {power_limit}'
 
     def pcie_throughput(self) -> ThroughputInfo:  # in KiB/s
@@ -1968,7 +1972,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """  # pylint: disable=line-too-long
         if self.is_rocm():
             return NA
-        
+
         return {0: 'Disabled', 1: 'Enabled'}.get(
             libnvml.nvmlQuery('nvmlDeviceGetDisplayActive', self.handle),
             NA,
@@ -2017,7 +2021,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """
         if self.is_rocm():
             return NA
-        
+
         return {libnvml.NVML_DRIVER_WDDM: 'WDDM', libnvml.NVML_DRIVER_WDM: 'WDM'}.get(
             libnvml.nvmlQuery('nvmlDeviceGetCurrentDriverModel', self.handle),
             NA,
@@ -2045,7 +2049,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """  # pylint: disable=line-too-long
         if self.is_rocm():
             return NA
-        
+
         return {0: 'Disabled', 1: 'Enabled'}.get(
             libnvml.nvmlQuery('nvmlDeviceGetPersistenceMode', self.handle),
             NA,
@@ -2064,16 +2068,14 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=pstate
         """  # pylint: disable=line-too-long
         if self.is_rocm():
-            perflevel = librocm.getPerfLevel(self.handle)
+            perflevel = librocm.getPerfLevel(self.handle)  # type: ignore[attr-defined]
             if perflevel != -1:
                 perflevel = str(perflevel).lower()
                 if perflevel == 'auto':
                     return 'A'
-                else:
-                    return perflevel
-            else:
-                return 'Unsupported'
-        
+                return perflevel
+            return 'Unsupported'
+
         performance_state = libnvml.nvmlQuery('nvmlDeviceGetPerformanceState', self.handle)
         if libnvml.nvmlCheckReturn(performance_state, int):
             performance_state = 'P' + str(performance_state)
@@ -2092,8 +2094,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=ecc.errors.uncorrected.volatile.total
         """  # pylint: disable=line-too-long
         if self.is_rocm():
-            return NA # TODO: to be implemented
-        
+            return NA  # TODO: to be implemented # pylint: disable=W0511
+
         return libnvml.nvmlQuery(
             'nvmlDeviceGetTotalEccErrors',
             self.handle,
@@ -2118,8 +2120,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=compute_mode
         """  # pylint: disable=line-too-long
         if self.is_rocm():
-            return NA # TODO: to be implemented
-        
+            return NA  # TODO: to be implemented # pylint: disable=W0511
+
         return {
             libnvml.NVML_COMPUTEMODE_DEFAULT: 'Default',
             libnvml.NVML_COMPUTEMODE_EXCLUSIVE_THREAD: 'Exclusive Thread',
@@ -2140,8 +2142,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=compute_cap
         """
         if self.is_rocm():
-            return NA # TODO: to be implemented
-        
+            return NA  # TODO: to be implemented # pylint: disable=W0511
+
         if self._cuda_compute_capability is None:
             self._cuda_compute_capability = libnvml.nvmlQuery(
                 'nvmlDeviceGetCudaComputeCapability',
@@ -2153,7 +2155,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """Return whether or not the device is a MIG device."""
         if self.is_rocm():
             return False
-        
+
         if self._is_mig_device is None:
             is_mig_device = libnvml.nvmlQuery(
                 'nvmlDeviceIsMigDeviceHandle',
@@ -2180,7 +2182,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """
         if self.is_rocm():
             return NA
-        
+
         if self.is_mig_device():
             return NA
 
@@ -2239,58 +2241,65 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         Returns: Dict[int, GpuProcess]
             A dictionary mapping PID to GPU process instance.
         """
+        # pylint: disable=too-many-branches, too-many-locals
         processes = {}
 
         found_na = False
-        if self.is_rocm():
-            pidlist = librocm.getPidList()
+        if self.is_rocm():  # pylint: disable=too-many-nested-blocks
+            pidlist = librocm.getPidList()  # type: ignore[attr-defined]
             pidlist = [int(pid) for pid in pidlist]
-            
-            dv_indices  = c_void_p()
+
+            dv_indices = c_void_p()
             num_devices = c_uint32()
-            proc = librocm.rsmi_process_info_t()
+            proc = librocm.rsmi_process_info_t()  # type: ignore[attr-defined]
             for pid in pidlist:
-                gpuNumber = 'UNKNOWN'
-                vramUsage = 'UNKNOWN'
-                sdmaUsage = 'UNKNOWN'
-                cuOccupancy = 'UNKNOWN'
-                cuOccupancyInvalid = 0xFFFFFFFF
-                dv_indices = (c_uint32 * num_devices.value)()
-                ret = librocm.rocmsmi.rsmi_compute_process_gpus_get(int(pid), None, byref(num_devices))
-                if librocm.rsmi_ret_ok(ret, metric='get_gpu_compute_process'):
-                    dv_indices = (c_uint32 * num_devices.value)()
-                    ret = librocm.rocmsmi.rsmi_compute_process_gpus_get(int(pid), dv_indices, byref(num_devices))
-                    # print("dv_incices", list(dv_indices))
-                    # print("num_devices", num_devices.value)
-                    if librocm.rsmi_ret_ok(ret, metric='get_gpu_compute_process'):
-                        gpuNumber = str(num_devices.value)
-                    else:
-                        logging.debug('Unable to fetch GPU number by PID')
-                
-                for dv_index in list(dv_indices): # 只处理属于 self gpu 的 process
-                    if dv_index != self.handle:
+                vram_usage: str | c_uint64 = 'UNKNOWN'
+                # sdma_usage: str | c_uint64 = 'UNKNOWN'
+                cu_occupancy_: str | c_uint32 = 'UNKNOWN'
+                dv_indices = (c_uint32 * num_devices.value)()  # type: ignore[assignment]
+                ret = librocm.rocmsmi.rsmi_compute_process_gpus_get(  # type: ignore[attr-defined]
+                    int(pid),
+                    None,
+                    byref(num_devices),
+                )
+                if librocm.rsmi_ret_ok(ret, metric='get_gpu_compute_process'):  # type: ignore[attr-defined]
+                    dv_indices = (c_uint32 * num_devices.value)()  # type: ignore[assignment]
+                    ret = librocm.rocmsmi.rsmi_compute_process_gpus_get(  # type: ignore[attr-defined]
+                        int(pid),
+                        dv_indices,
+                        byref(num_devices),
+                    )
+
+                for dv_index in list(dv_indices):  # type: ignore[call-overload]
+                    if dv_index != self.handle:  # ONLY handle the process belongs to 'self.gpu'
                         continue
-                    
+
                     try:
-                        ret = librocm.rocmsmi.rsmi_compute_process_info_by_device_get(int(pid), self.handle, byref(proc))
-                        if librocm.rsmi_ret_ok(ret, metric='get_compute_process_info_by_pid'):
-                            vramUsage = proc.vram_usage
-                            sdmaUsage = proc.sdma_usage
-                            if proc.cu_occupancy != cuOccupancyInvalid:
-                                cuOccupancy = proc.cu_occupancy
+                        ret = librocm.rocmsmi.rsmi_compute_process_info_by_device_get(  # type: ignore[attr-defined]
+                            int(pid),
+                            self.handle,
+                            byref(proc),
+                        )
+                        if librocm.rsmi_ret_ok(ret, metric='get_compute_process_info_by_pid'):  # type: ignore[attr-defined]  # pylint: disable=line-too-long
+                            vram_usage = proc.vram_usage
+                            # sdma_usage = proc.sdma_usage
+                            if proc.cu_occupancy != 0xFFFFFFFF:  # cu_occupancy_invalid
+                                cu_occupancy_ = proc.cu_occupancy
                         else:
                             logging.debug('Unable to fetch process info by PID')
                     except AttributeError:
-                        logging.debug("Driver too old to support rsmi_compute_process_info_by_device_get")
-                
+                        logging.debug(
+                            'Driver too old to support rsmi_compute_process_info_by_device_get',
+                        )
+
                     processes[pid] = self.GPU_PROCESS_CLASS(
-                        pid = pid,
-                        device = self,
-                        gpu_memory = vramUsage,
-                        gpu_instance_id = NA,
-                        compute_instance_id = NA,
+                        pid=pid,
+                        device=self,
+                        gpu_memory=int(vram_usage),
+                        gpu_instance_id=NA,
+                        compute_instance_id=NA,
                     )
-                    processes[pid].set_gpu_utilization(cuOccupancy, 0, 0, 0)
+                    processes[pid].set_gpu_utilization(int(cu_occupancy_), 0, 0, 0)
         else:
             for type, func in (  # pylint: disable=redefined-builtin
                 ('C', 'nvmlDeviceGetComputeRunningProcesses'),
@@ -2325,7 +2334,12 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
                 )
                 for s in sorted(samples, key=lambda s: s.timeStamp):
                     try:
-                        processes[s.pid].set_gpu_utilization(s.smUtil, s.memUtil, s.encUtil, s.decUtil)
+                        processes[s.pid].set_gpu_utilization(
+                            s.smUtil,
+                            s.memUtil,
+                            s.encUtil,
+                            s.decUtil,
+                        )
                     except KeyError:  # noqa: PERF203
                         pass
                 if not found_na:
