@@ -5,6 +5,8 @@ from amdsmi import AmdSmiException
 from typing import TYPE_CHECKING as _TYPE_CHECKING
 from typing import TypeAlias as _TypeAlias
 import ctypes as _ctypes
+import logging
+
 ASMIError: type[_asmi.AmdSmiException] = _asmi.AmdSmiException
 ASMIDeviceHandle: _TypeAlias = _ctypes.c_void_p
 """
@@ -102,6 +104,7 @@ def get_utilization_rates(handle: ASMIDeviceHandle) -> (int, int):  # type: igno
     """
 
     """
+    _lazy_init()
     try:
         engine_usage = _asmi.amdsmi_get_gpu_activity(handle)
         return engine_usage['gfx_activity'], engine_usage['umc_activity']
@@ -133,9 +136,12 @@ def get_temperature(handle: ASMIDeviceHandle) -> int | None:
         return None
 
 def get_power_usage(handle: ASMIDeviceHandle) -> int | None:
+    """
+    Watts
+    """
     try:
         power_info = _asmi.amdsmi_get_power_info(handle)
-        return power_info['average_socket_power']
+        return power_info['average_socket_power'] * 1000
     except AmdSmiException as e:
         return None
 
