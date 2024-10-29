@@ -1459,7 +1459,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             $(( "$(nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=power.draw)" * 1000 ))
         """
         if self.is_amd():
-            return NA # TODO: support amd power usage
+            return libasmi.get_power_usage(self.handle)
         else:
             return libnvml.nvmlQuery('nvmlDeviceGetPowerUsage', self.handle)
 

@@ -135,6 +135,13 @@ def get_temperature(handle: ASMIDeviceHandle) -> int | None:
         print("get_temperature", e)
         return None
 
+def get_power_usage(handle: ASMIDeviceHandle) -> int | None:
+    try:
+        power_info = _asmi.amdsmi_get_power_info(handle)
+        return power_info['average_socket_power']
+    except AmdSmiException as e:
+        return None
+
 def get_power_cap(handle: ASMIDeviceHandle) -> int | None:
     """
     Return Power Capability in Watts
