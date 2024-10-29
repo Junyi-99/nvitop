@@ -117,7 +117,7 @@ import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generator, Iterable, NamedTuple, overload
 
-from nvitop.api import libcuda, libcudart, libnvml
+from nvitop.api import libcuda, libcudart, libnvml, libasmi
 from nvitop.api.process import GpuProcess
 from nvitop.api.utils import (
     NA,
@@ -287,13 +287,22 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
     """Shortcut for class :class:`CudaDevice`."""
 
     _nvml_index: int | tuple[int, int]
-
+    _asmi_index: int | tuple[int, int]
+    
     @classmethod
     def is_available(cls) -> bool:
-        """Test whether there are any devices and the NVML library is successfully loaded."""
+        """Test whether there are any devices and the NVML library / AMD SMI library is successfully loaded."""
         try:
             return cls.count() > 0
         except libnvml.NVMLError:
+            return False
+
+    @classmethod
+    @functools.cache
+    def is_amd(cls) -> bool:
+        try:
+            return libasmi.asmi_available()
+        except:
             return False
 
     @staticmethod
@@ -315,7 +324,10 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
                 If RM detects a driver/library version mismatch, usually after an upgrade for NVIDIA
                 driver without reloading the kernel module.
         """
-        return libnvml.nvmlQuery('nvmlSystemGetDriverVersion')
+        if Device.is_amd():
+            return libasmi.get_driver_version()
+        else:
+            return libnvml.nvmlQuery('nvmlSystemGetDriverVersion')
 
     @staticmethod
     def cuda_driver_version() -> str | NaType:
@@ -335,6 +347,9 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
                 If RM detects a driver/library version mismatch, usually after an upgrade for NVIDIA
                 driver without reloading the kernel module.
         """
+        if Device.is_amd():
+            return NA
+        
         cuda_driver_version = libnvml.nvmlQuery('nvmlSystemGetCudaDriverVersion')
         if libnvml.nvmlCheckReturn(cuda_driver_version, int):
             major = cuda_driver_version // 1000
@@ -382,8 +397,12 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             libnvml.NVMLError_LibRmVersionMismatch:
                 If RM detects a driver/library version mismatch, usually after an upgrade for NVIDIA
                 driver without reloading the kernel module.
+            TODO: add amd exceptions
         """
-        return libnvml.nvmlQuery('nvmlDeviceGetCount', default=0)
+        if cls.is_amd():
+            return libasmi.device_count()
+        else:
+            return libnvml.nvmlQuery('nvmlDeviceGetCount', default=0)
 
     @classmethod
     def all(cls) -> list[PhysicalDevice]:
@@ -662,15 +681,20 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         self._is_mig_device: bool | None = None
         self._cuda_index: int | None = None
         self._cuda_compute_capability: tuple[int, int] | NaType | None = None
-
+        self._is_amd: bool = False
+        
         if index is not None:
-            self._nvml_index = index  # type: ignore[assignment]
             try:
-                self._handle = libnvml.nvmlQuery(
-                    'nvmlDeviceGetHandleByIndex',
-                    index,
-                    ignore_errors=False,
-                )
+                if self.is_amd():
+                    self._asmi_index = index  # type: ignore[assignment]
+                    self._handle = libasmi.device_handle(index)
+                else:
+                    self._nvml_index = index # type: ignore[assignment]
+                    self._handle = libnvml.nvmlQuery(
+                        'nvmlDeviceGetHandleByIndex',
+                        index,
+                        ignore_errors=False,
+                    )
             except libnvml.NVMLError_GpuIsLost:
                 self._handle = None
                 self._name = 'ERROR: GPU is Lost'
@@ -704,7 +728,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
         self._max_clock_infos: ClockInfos = ClockInfos(graphics=NA, sm=NA, memory=NA, video=NA)
         self._lock: threading.RLock = threading.RLock()
-
+        
         self._ident: tuple[Hashable, str] = (self.index, self.uuid())
         self._hash: int | None = None
 
@@ -768,6 +792,9 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             else:
                 suffix = ''
 
+            if self.is_amd():
+                return NA
+            
             try:
                 pascal_case = name.title().replace('_', '')
                 func = getattr(libnvml, 'nvmlDeviceGet' + pascal_case + suffix)
@@ -805,7 +832,10 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         Returns: Union[int, Tuple[int, int]]
             Returns an int for physical device and tuple of two integers for MIG device.
         """
-        return self._nvml_index
+        if self.is_amd():
+            return self._asmi_index
+        else:
+            return self._nvml_index
 
     @property
     def nvml_index(self) -> int | tuple[int, int]:
@@ -824,7 +854,10 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             An int for the physical device index. For MIG devices, returns the index of the parent
             physical device.
         """
-        return self._nvml_index  # type: ignore[return-value] # will be overridden in MigDevice
+        if self.is_amd():
+            return self._asmi_index
+        else:
+            return self._nvml_index  # type: ignore[return-value] # will be overridden in MigDevice
 
     @property
     def handle(self) -> libnvml.c_nvmlDevice_t:
@@ -866,7 +899,10 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=name
         """
         if self._name is NA:
-            self._name = libnvml.nvmlQuery('nvmlDeviceGetName', self.handle)
+            if self.is_amd():
+                self._name = libasmi.get_device_name(self.handle)
+            else:
+                self._name = libnvml.nvmlQuery('nvmlDeviceGetName', self.handle)
         return self._name
 
     def uuid(self) -> str | NaType:
@@ -884,7 +920,10 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=name
         """
         if self._uuid is NA:
-            self._uuid = libnvml.nvmlQuery('nvmlDeviceGetUUID', self.handle)
+            if self.is_amd():
+                self._uuid = libasmi.get_uuid(self.handle)
+            else:
+                self._uuid = libnvml.nvmlQuery('nvmlDeviceGetUUID', self.handle)
         return self._uuid
 
     def bus_id(self) -> str | NaType:
@@ -900,10 +939,13 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=pci.bus_id
         """
         if self._bus_id is NA:
-            self._bus_id = libnvml.nvmlQuery(
-                lambda handle: libnvml.nvmlDeviceGetPciInfo(handle).busId,
-                self.handle,
-            )
+            if self.is_amd():
+                self._bus_id = libasmi.get_bdf(self.handle)
+            else:
+                self._bus_id = libnvml.nvmlQuery(
+                    lambda handle: libnvml.nvmlDeviceGetPciInfo(handle).busId,
+                    self.handle,
+                )
         return self._bus_id
 
     def serial(self) -> str | NaType:
@@ -929,9 +971,14 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         Returns: MemoryInfo(total, free, used)
             A named tuple with memory information, the item could be :const:`nvitop.NA` when not applicable.
         """
-        memory_info = libnvml.nvmlQuery('nvmlDeviceGetMemoryInfo', self.handle)
-        if libnvml.nvmlCheckReturn(memory_info):
-            return MemoryInfo(total=memory_info.total, free=memory_info.free, used=memory_info.used)
+        if self.is_amd():
+            used, total = libasmi.get_memory_info(self.handle)
+            free = total - used
+            return MemoryInfo(total=total, free=free, used=used)
+        else:
+            memory_info = libnvml.nvmlQuery('nvmlDeviceGetMemoryInfo', self.handle)
+            if libnvml.nvmlCheckReturn(memory_info):
+                return MemoryInfo(total=memory_info.total, free=memory_info.free, used=memory_info.used)
         return MemoryInfo(total=NA, free=NA, used=NA)
 
     def memory_total(self) -> int | NaType:  # in bytes
@@ -1120,18 +1167,22 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             A named tuple with GPU utilization rates (in percentage) for the device, the item could be :const:`nvitop.NA` when not applicable.
         """  # pylint: disable=line-too-long
         gpu, memory, encoder, decoder = NA, NA, NA, NA
+        if self.is_amd():
+            # gpu, memory = libasmi.get_utilization_rates(self.handle)
+            # print("Cannot get util rate")
+            pass
+        else:
+            utilization_rates = libnvml.nvmlQuery('nvmlDeviceGetUtilizationRates', self.handle)
+            if libnvml.nvmlCheckReturn(utilization_rates):
+                gpu, memory = utilization_rates.gpu, utilization_rates.memory
 
-        utilization_rates = libnvml.nvmlQuery('nvmlDeviceGetUtilizationRates', self.handle)
-        if libnvml.nvmlCheckReturn(utilization_rates):
-            gpu, memory = utilization_rates.gpu, utilization_rates.memory
+            encoder_utilization = libnvml.nvmlQuery('nvmlDeviceGetEncoderUtilization', self.handle)
+            if libnvml.nvmlCheckReturn(encoder_utilization, list) and len(encoder_utilization) > 0:
+                encoder = encoder_utilization[0]
 
-        encoder_utilization = libnvml.nvmlQuery('nvmlDeviceGetEncoderUtilization', self.handle)
-        if libnvml.nvmlCheckReturn(encoder_utilization, list) and len(encoder_utilization) > 0:
-            encoder = encoder_utilization[0]
-
-        decoder_utilization = libnvml.nvmlQuery('nvmlDeviceGetDecoderUtilization', self.handle)
-        if libnvml.nvmlCheckReturn(decoder_utilization, list) and len(decoder_utilization) > 0:
-            decoder = decoder_utilization[0]
+            decoder_utilization = libnvml.nvmlQuery('nvmlDeviceGetDecoderUtilization', self.handle)
+            if libnvml.nvmlCheckReturn(decoder_utilization, list) and len(decoder_utilization) > 0:
+                decoder = decoder_utilization[0]
 
         return UtilizationRates(gpu=gpu, memory=memory, encoder=encoder, decoder=decoder)
 
@@ -1367,7 +1418,11 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=fan.speed
         """  # pylint: disable=line-too-long
-        return libnvml.nvmlQuery('nvmlDeviceGetFanSpeed', self.handle)
+        if self.is_amd():
+            speed = libasmi.get_fan_speed(self.handle)
+            return NA if speed is None else speed
+        else:
+            return libnvml.nvmlQuery('nvmlDeviceGetFanSpeed', self.handle)
 
     def temperature(self) -> int | NaType:  # in Celsius
         """Core GPU temperature in degrees C.
@@ -1381,11 +1436,14 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=temperature.gpu
         """
-        return libnvml.nvmlQuery(
-            'nvmlDeviceGetTemperature',
-            self.handle,
-            libnvml.NVML_TEMPERATURE_GPU,
-        )
+        if self.is_amd():
+            return libasmi.get_temperature(self.handle)
+        else:
+            return libnvml.nvmlQuery(
+                'nvmlDeviceGetTemperature',
+                self.handle,
+                libnvml.NVML_TEMPERATURE_GPU,
+            )
 
     @memoize_when_activated
     def power_usage(self) -> int | NaType:  # in milliwatts (mW)
@@ -1400,7 +1458,10 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             $(( "$(nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=power.draw)" * 1000 ))
         """
-        return libnvml.nvmlQuery('nvmlDeviceGetPowerUsage', self.handle)
+        if self.is_amd():
+            return NA # TODO: support amd power usage
+        else:
+            return libnvml.nvmlQuery('nvmlDeviceGetPowerUsage', self.handle)
 
     power_draw = power_usage  # in milliwatts (mW)
 
@@ -1419,7 +1480,10 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             $(( "$(nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=power.limit)" * 1000 ))
         """
-        return libnvml.nvmlQuery('nvmlDeviceGetPowerManagementLimit', self.handle)
+        if self.is_amd():
+            return libasmi.get_power_cap(self.handle) * 1000
+        else:
+            return libnvml.nvmlQuery('nvmlDeviceGetPowerManagementLimit', self.handle)
 
     def power_status(self) -> str:  # string of power usage over power limit in watts (W)
         """The string of power usage over power limit in watts.
@@ -1982,10 +2046,13 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=display_active
         """  # pylint: disable=line-too-long
-        return {0: 'Disabled', 1: 'Enabled'}.get(
-            libnvml.nvmlQuery('nvmlDeviceGetDisplayActive', self.handle),
-            NA,
-        )
+        if self.is_amd():
+            return NA # TODO: support amd power usage
+        else:
+            return {0: 'Disabled', 1: 'Enabled'}.get(
+                libnvml.nvmlQuery('nvmlDeviceGetDisplayActive', self.handle),
+                NA,
+            )
 
     def display_mode(self) -> str | NaType:
         """A flag that indicates whether a physical display (e.g. monitor) is currently connected to any of the GPU's connectors.
@@ -2028,10 +2095,13 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=driver_model.current
         """
-        return {libnvml.NVML_DRIVER_WDDM: 'WDDM', libnvml.NVML_DRIVER_WDM: 'WDM'}.get(
-            libnvml.nvmlQuery('nvmlDeviceGetCurrentDriverModel', self.handle),
-            NA,
-        )
+        if self.is_amd():
+            return NA # TODO: support amd power usage
+        else:
+            return {libnvml.NVML_DRIVER_WDDM: 'WDDM', libnvml.NVML_DRIVER_WDM: 'WDM'}.get(
+                libnvml.nvmlQuery('nvmlDeviceGetCurrentDriverModel', self.handle),
+                NA,
+            )
 
     driver_model = current_driver_model
 
@@ -2053,10 +2123,13 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=persistence_mode
         """  # pylint: disable=line-too-long
-        return {0: 'Disabled', 1: 'Enabled'}.get(
-            libnvml.nvmlQuery('nvmlDeviceGetPersistenceMode', self.handle),
-            NA,
-        )
+        if self.is_amd():
+            return NA # TODO: support amd power usage
+        else:
+            return {0: 'Disabled', 1: 'Enabled'}.get(
+                libnvml.nvmlQuery('nvmlDeviceGetPersistenceMode', self.handle),
+                NA,
+            )
 
     def performance_state(self) -> str | NaType:
         """The current performance state for the GPU. States range from P0 (maximum performance) to P12 (minimum performance).
@@ -2070,10 +2143,13 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=pstate
         """  # pylint: disable=line-too-long
-        performance_state = libnvml.nvmlQuery('nvmlDeviceGetPerformanceState', self.handle)
-        if libnvml.nvmlCheckReturn(performance_state, int):
-            performance_state = 'P' + str(performance_state)
-        return performance_state
+        if self.is_amd():
+            return NA # TODO: support amd power usage
+        else:
+            performance_state = libnvml.nvmlQuery('nvmlDeviceGetPerformanceState', self.handle)
+            if libnvml.nvmlCheckReturn(performance_state, int):
+                performance_state = 'P' + str(performance_state)
+            return performance_state
 
     def total_volatile_uncorrected_ecc_errors(self) -> int | NaType:
         """Total errors detected across entire chip.
@@ -2087,12 +2163,15 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=ecc.errors.uncorrected.volatile.total
         """  # pylint: disable=line-too-long
-        return libnvml.nvmlQuery(
-            'nvmlDeviceGetTotalEccErrors',
-            self.handle,
-            libnvml.NVML_MEMORY_ERROR_TYPE_UNCORRECTED,
-            libnvml.NVML_VOLATILE_ECC,
-        )
+        if self.is_amd():
+            return NA # TODO: support amd power usage
+        else:
+            return libnvml.nvmlQuery(
+                'nvmlDeviceGetTotalEccErrors',
+                self.handle,
+                libnvml.NVML_MEMORY_ERROR_TYPE_UNCORRECTED,
+                libnvml.NVML_VOLATILE_ECC,
+            )
 
     def compute_mode(self) -> str | NaType:
         """The compute mode flag indicates whether individual or multiple compute applications may run on the GPU.
@@ -2110,12 +2189,15 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=compute_mode
         """  # pylint: disable=line-too-long
-        return {
-            libnvml.NVML_COMPUTEMODE_DEFAULT: 'Default',
-            libnvml.NVML_COMPUTEMODE_EXCLUSIVE_THREAD: 'Exclusive Thread',
-            libnvml.NVML_COMPUTEMODE_PROHIBITED: 'Prohibited',
-            libnvml.NVML_COMPUTEMODE_EXCLUSIVE_PROCESS: 'Exclusive Process',
-        }.get(libnvml.nvmlQuery('nvmlDeviceGetComputeMode', self.handle), NA)
+        if self.is_amd():
+            return NA # TODO: support amd power usage
+        else:
+            return {
+                libnvml.NVML_COMPUTEMODE_DEFAULT: 'Default',
+                libnvml.NVML_COMPUTEMODE_EXCLUSIVE_THREAD: 'Exclusive Thread',
+                libnvml.NVML_COMPUTEMODE_PROHIBITED: 'Prohibited',
+                libnvml.NVML_COMPUTEMODE_EXCLUSIVE_PROCESS: 'Exclusive Process',
+            }.get(libnvml.nvmlQuery('nvmlDeviceGetComputeMode', self.handle), NA)
 
     def cuda_compute_capability(self) -> tuple[int, int] | NaType:
         """The CUDA compute capability for the device.
@@ -2138,6 +2220,9 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
     def is_mig_device(self) -> bool:
         """Return whether or not the device is a MIG device."""
+        if self.is_amd():
+            self._is_mig_device = False
+            return False
         if self._is_mig_device is None:
             is_mig_device = libnvml.nvmlQuery(
                 'nvmlDeviceIsMigDeviceHandle',
@@ -2162,7 +2247,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=mig.mode.current
         """
-        if self.is_mig_device():
+        if self.is_mig_device() or self.is_amd():
             return NA
 
         mig_mode, *_ = libnvml.nvmlQuery(
@@ -2221,7 +2306,9 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             A dictionary mapping PID to GPU process instance.
         """
         processes = {}
-
+        if self.is_amd():
+            return processes
+        
         found_na = False
         for type, func in (  # pylint: disable=redefined-builtin
             ('C', 'nvmlDeviceGetComputeRunningProcesses'),
@@ -2388,7 +2475,7 @@ class PhysicalDevice(Device):
 
     This is the real GPU installed in the system.
     """
-
+    
     _nvml_index: int
     index: int
     nvml_index: int
