@@ -687,7 +687,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             try:
                 if self.is_amd():
                     self._asmi_index = index  # type: ignore[assignment]
-                    self._handle = libasmi.device_handle(index)
+                    self._handle = None # Do not use handle in AMD SMI, because the handle expires implicitly
                 else:
                     self._nvml_index = index # type: ignore[assignment]
                     self._handle = libnvml.nvmlQuery(
@@ -793,6 +793,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
                 suffix = ''
 
             if self.is_amd():
+                import logging
+                logging.error(f"getattr {name}\n", )
                 return NA
             
             try:
@@ -900,7 +902,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """
         if self._name is NA:
             if self.is_amd():
-                self._name = libasmi.get_device_name(self.handle)
+                self._name = libasmi.get_device_name(self._asmi_index)
             else:
                 self._name = libnvml.nvmlQuery('nvmlDeviceGetName', self.handle)
         return self._name
@@ -921,7 +923,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """
         if self._uuid is NA:
             if self.is_amd():
-                self._uuid = libasmi.get_uuid(self.handle)
+                self._uuid = libasmi.get_uuid(self._asmi_index)
             else:
                 self._uuid = libnvml.nvmlQuery('nvmlDeviceGetUUID', self.handle)
         return self._uuid
@@ -940,7 +942,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """
         if self._bus_id is NA:
             if self.is_amd():
-                self._bus_id = libasmi.get_bdf(self.handle)
+                self._bus_id = libasmi.get_bdf(self._asmi_index)
             else:
                 self._bus_id = libnvml.nvmlQuery(
                     lambda handle: libnvml.nvmlDeviceGetPciInfo(handle).busId,
@@ -972,9 +974,9 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             A named tuple with memory information, the item could be :const:`nvitop.NA` when not applicable.
         """
         if self.is_amd():
-            used, total = libasmi.get_memory_info(self.handle)
+            used, total = libasmi.get_memory_info(self._asmi_index)
             free = total - used
-            return MemoryInfo(total=total, free=free, used=used)
+            return MemoryInfo(total=total, free=free, used=used) # This function affects the MEM in the chart
         else:
             memory_info = libnvml.nvmlQuery('nvmlDeviceGetMemoryInfo', self.handle)
             if libnvml.nvmlCheckReturn(memory_info):
@@ -1168,7 +1170,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """  # pylint: disable=line-too-long
         gpu, memory, encoder, decoder = NA, NA, NA, NA
         if self.is_amd():
-            gpu, memory = libasmi.get_utilization_rates(self.handle)
+            gpu, memory = libasmi.get_utilization_rates(self._asmi_index)
         else:
             utilization_rates = libnvml.nvmlQuery('nvmlDeviceGetUtilizationRates', self.handle)
             if libnvml.nvmlCheckReturn(utilization_rates):
@@ -1241,20 +1243,28 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         Returns: ClockInfos(graphics, sm, memory, video)
             A named tuple with current clock speeds (in MHz) for the device, the item could be :const:`nvitop.NA` when not applicable.
         """  # pylint: disable=line-too-long
-        return ClockInfos(
-            graphics=libnvml.nvmlQuery(
-                'nvmlDeviceGetClockInfo',
-                self.handle,
-                libnvml.NVML_CLOCK_GRAPHICS,
-            ),
-            sm=libnvml.nvmlQuery('nvmlDeviceGetClockInfo', self.handle, libnvml.NVML_CLOCK_SM),
-            memory=libnvml.nvmlQuery('nvmlDeviceGetClockInfo', self.handle, libnvml.NVML_CLOCK_MEM),
-            video=libnvml.nvmlQuery(
-                'nvmlDeviceGetClockInfo',
-                self.handle,
-                libnvml.NVML_CLOCK_VIDEO,
-            ),
-        )
+        if self.is_amd():
+            return ClockInfos(
+                graphics=NA,
+                sm=NA,
+                memory=NA,
+                video=NA
+            )
+        else:
+            return ClockInfos(
+                graphics=libnvml.nvmlQuery(
+                    'nvmlDeviceGetClockInfo',
+                    self.handle,
+                    libnvml.NVML_CLOCK_GRAPHICS,
+                ),
+                sm=libnvml.nvmlQuery('nvmlDeviceGetClockInfo', self.handle, libnvml.NVML_CLOCK_SM),
+                memory=libnvml.nvmlQuery('nvmlDeviceGetClockInfo', self.handle, libnvml.NVML_CLOCK_MEM),
+                video=libnvml.nvmlQuery(
+                    'nvmlDeviceGetClockInfo',
+                    self.handle,
+                    libnvml.NVML_CLOCK_VIDEO,
+                ),
+            )
 
     clocks = clock_infos
 
@@ -1265,17 +1275,20 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         Returns: ClockInfos(graphics, sm, memory, video)
             A named tuple with maximum clock speeds (in MHz) for the device, the item could be :const:`nvitop.NA` when not applicable.
         """  # pylint: disable=line-too-long
-        clock_infos = self._max_clock_infos._asdict()
-        for name, clock in clock_infos.items():
-            if clock is NA:
-                clock_type = getattr(
-                    libnvml,
-                    'NVML_CLOCK_{}'.format(name.replace('memory', 'mem').upper()),
-                )
-                clock = libnvml.nvmlQuery('nvmlDeviceGetMaxClockInfo', self.handle, clock_type)
-                clock_infos[name] = clock
-        self._max_clock_infos = ClockInfos(**clock_infos)
-        return self._max_clock_infos
+        if self.is_amd():
+            return self._max_clock_infos
+        else:
+            clock_infos = self._max_clock_infos._asdict()
+            for name, clock in clock_infos.items():
+                if clock is NA:
+                    clock_type = getattr(
+                        libnvml,
+                        'NVML_CLOCK_{}'.format(name.replace('memory', 'mem').upper()),
+                    )
+                    clock = libnvml.nvmlQuery('nvmlDeviceGetMaxClockInfo', self.handle, clock_type)
+                    clock_infos[name] = clock
+            self._max_clock_infos = ClockInfos(**clock_infos)
+            return self._max_clock_infos
 
     max_clocks = max_clock_infos
 
@@ -1417,7 +1430,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=fan.speed
         """  # pylint: disable=line-too-long
         if self.is_amd():
-            speed = libasmi.get_fan_speed(self.handle)
+            speed = libasmi.get_fan_speed(self._asmi_index)
             return NA if speed is None else speed
         else:
             return libnvml.nvmlQuery('nvmlDeviceGetFanSpeed', self.handle)
@@ -1435,7 +1448,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=temperature.gpu
         """
         if self.is_amd():
-            return libasmi.get_temperature(self.handle)
+            return libasmi.get_temperature(self._asmi_index)
         else:
             return libnvml.nvmlQuery(
                 'nvmlDeviceGetTemperature',
@@ -1457,7 +1470,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             $(( "$(nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=power.draw)" * 1000 ))
         """
         if self.is_amd():
-            return libasmi.get_power_usage(self.handle)
+            return libasmi.get_power_usage(self._asmi_index)
         else:
             return libnvml.nvmlQuery('nvmlDeviceGetPowerUsage', self.handle)
 
@@ -1479,7 +1492,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             $(( "$(nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=power.limit)" * 1000 ))
         """
         if self.is_amd():
-            return libasmi.get_power_cap(self.handle) * 1000
+            return libasmi.get_power_cap(self._asmi_index) * 1000
         else:
             return libnvml.nvmlQuery('nvmlDeviceGetPowerManagementLimit', self.handle)
 
@@ -1519,6 +1532,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         Returns: Union[int, NaType]
             The current PCIe transmit throughput in KiB/s, or :const:`nvitop.NA` when not applicable.
         """
+        if self.is_amd():
+            return NA
         return libnvml.nvmlQuery(
             'nvmlDeviceGetPcieThroughput',
             self.handle,
@@ -1535,6 +1550,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         Returns: Union[int, NaType]
             The current PCIe receive throughput in KiB/s, or :const:`nvitop.NA` when not applicable.
         """
+        if self.is_amd():
+            return NA
         return libnvml.nvmlQuery(
             'nvmlDeviceGetPcieThroughput',
             self.handle,
@@ -2068,6 +2085,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=display_mode
         """  # pylint: disable=line-too-long
+        if self.is_amd():
+            return NA
         return {0: 'Disabled', 1: 'Enabled'}.get(
             libnvml.nvmlQuery('nvmlDeviceGetDisplayMode', self.handle),
             NA,
@@ -2142,7 +2161,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=pstate
         """  # pylint: disable=line-too-long
         if self.is_amd():
-            return libasmi.get_perf_level(self.handle)
+            return libasmi.get_perf_level(self._asmi_index)
         else:
             performance_state = libnvml.nvmlQuery('nvmlDeviceGetPerformanceState', self.handle)
             if libnvml.nvmlCheckReturn(performance_state, int):
@@ -2162,7 +2181,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=ecc.errors.uncorrected.volatile.total
         """  # pylint: disable=line-too-long
         if self.is_amd():
-            return NA # TODO: support amd power usage
+            return libasmi.get_uncorrectable_ecc(self._asmi_index)
         else:
             return libnvml.nvmlQuery(
                 'nvmlDeviceGetTotalEccErrors',
@@ -2209,6 +2228,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=compute_cap
         """
+        if self.is_amd():
+            return NA
         if self._cuda_compute_capability is None:
             self._cuda_compute_capability = libnvml.nvmlQuery(
                 'nvmlDeviceGetCudaComputeCapability',
@@ -2355,6 +2376,8 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
 
         The attributes are defined in :attr:`SNAPSHOT_KEYS`.
         """
+        import logging
+        logging.error(f"snapshot {self.index} {self.handle} {self.physical_index}")
         with self.oneshot():
             return Snapshot(
                 real=self,
