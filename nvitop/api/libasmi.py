@@ -102,14 +102,11 @@ def get_utilization_rates(handle: ASMIDeviceHandle) -> (int, int):  # type: igno
     """
 
     """
-
     try:
-        gfx = _asmi.amdsmi_get_utilization_count(handle, _asmi.AmdSmiUtilizationCounterType.COARSE_GRAIN_GFX_ACTIVITY)
-        mem = _asmi.amdsmi_get_utilization_count(handle, _asmi.AmdSmiUtilizationCounterType.COARSE_GRAIN_MEM_ACTIVITY)
-        return gfx, mem
+        engine_usage = _asmi.amdsmi_get_gpu_activity(handle)
+        return engine_usage['gfx_activity'], engine_usage['umc_activity']
     except AmdSmiException as e:
-        print("get_utilization_rates", e)
-        return 0, 0
+        return -1, -1
 
 
 def get_fan_speed(handle: ASMIDeviceHandle) -> int | None:

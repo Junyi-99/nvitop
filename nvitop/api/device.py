@@ -1168,9 +1168,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
         """  # pylint: disable=line-too-long
         gpu, memory, encoder, decoder = NA, NA, NA, NA
         if self.is_amd():
-            # gpu, memory = libasmi.get_utilization_rates(self.handle)
-            # print("Cannot get util rate")
-            pass
+            gpu, memory = libasmi.get_utilization_rates(self.handle)
         else:
             utilization_rates = libnvml.nvmlQuery('nvmlDeviceGetUtilizationRates', self.handle)
             if libnvml.nvmlCheckReturn(utilization_rates):
@@ -2475,9 +2473,10 @@ class PhysicalDevice(Device):
 
     This is the real GPU installed in the system.
     """
-    
+    _asmi_index: int
     _nvml_index: int
     index: int
+    asmi_index: int
     nvml_index: int
 
     @property
@@ -2490,7 +2489,10 @@ class PhysicalDevice(Device):
 
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=index
         """
-        return self._nvml_index
+        if self.is_amd():
+            return self._asmi_index
+        else:
+            return self._nvml_index
 
     def max_mig_device_count(self) -> int:
         """Return the maximum number of MIG instances the device supports.
