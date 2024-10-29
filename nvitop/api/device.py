@@ -2142,7 +2142,7 @@ class Device:  # pylint: disable=too-many-instance-attributes,too-many-public-me
             nvidia-smi --id=<IDENTIFIER> --format=csv,noheader,nounits --query-gpu=pstate
         """  # pylint: disable=line-too-long
         if self.is_amd():
-            return NA # TODO: support amd power usage
+            return libasmi.get_perf_level(self.handle)
         else:
             performance_state = libnvml.nvmlQuery('nvmlDeviceGetPerformanceState', self.handle)
             if libnvml.nvmlCheckReturn(performance_state, int):

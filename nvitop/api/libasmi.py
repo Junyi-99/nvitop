@@ -148,3 +148,10 @@ def get_power_cap(handle: ASMIDeviceHandle) -> int | None:
         return power_info['power_cap']
     except AmdSmiException as e:
         return None
+
+def get_perf_level(handle: ASMIDeviceHandle) -> str | None:
+    try:
+        perf_level = _asmi.amdsmi_get_gpu_perf_level(handle)
+        return str(perf_level).replace("AMDSMI_DEV_PERF_LEVEL_", "").upper()[:3]
+    except AmdSmiException as e:
+        print(e)
